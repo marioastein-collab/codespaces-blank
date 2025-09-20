@@ -1,27 +1,18 @@
-# haneda_oct_oracle.py
-from playwright.sync_api import sync_playwright
-import requests
 import time
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
+from playwright.sync_api import sync_playwright
+import requests
 
 # === Telegram Bot Config ===
 BOT_TOKEN = "8402262632:AAHLXhtlueDYepJd8LUEK6J4mSh1UF2MHxg"
 CHAT_ID = "8430243174"
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-def log(msg: str):
-    """Prints message with timestamp prefix"""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}")
-
 def send_telegram(msg: str):
     payload = {"chat_id": CHAT_ID, "text": msg}
     r = requests.post(TELEGRAM_URL, data=payload)
-    if r.status_code == 200:
-        log("📩 Sent Telegram message")
-    else:
-        log(f"⚠️ Telegram failed: {r.text}")
+    print(f"Telegram status: {r.status_code} {r.text}")
 
 def get_type_name(cal_div):
     img = cal_div.query_selector("table.calendar_btm img")
@@ -49,12 +40,13 @@ def get_open_days(cal_div):
 
 def check_availability():
     LOGIN_URL = "https://pk-reserve.haneda-airport.jp/airport/en/entrance/0000.jsf"
+    results = {}
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
 
-        # --- Login ---
+        # Login
         page.goto(LOGIN_URL)
         page.click("img[alt='login']")
         page.wait_for_selector("form#form1", timeout=20000)
@@ -68,7 +60,7 @@ def check_availability():
         page.click('#form1\\:loginbutton img[alt="ログイン"]')
         page.wait_for_selector("#welcomarea", timeout=20000)
 
-        # --- Go to reservations ---
+        # Go to reservations
         if page.query_selector("#sidebar\\:_idJsp0\\:_idJsp18"):
             with page.expect_navigation():
                 page.click("#sidebar\\:_idJsp0\\:_idJsp18")
@@ -78,9 +70,8 @@ def check_availability():
 
         page.wait_for_selector("table.calendar_waku", timeout=20000)
 
-        # --- Go to October ---
+        # Go to October
         cal_divs = page.query_selector_all("div#calendar01, div#calendar02")
-        results = {}
         for idx in range(len(cal_divs)):
             cal_divs = page.query_selector_all("div#calendar01, div#calendar02")
             cal = cal_divs[idx]
@@ -98,42 +89,34 @@ def check_availability():
             results[tname] = open_days
 
         browser.close()
-        return results
+    return results
 
-# === Prompt user for targets ===
-log("Enter the target dates for October (comma-separated, e.g. 1,2,3):")
-dates_input = input("Target dates: ").strip()
-TARGET_DATES = set(int(x) for x in dates_input.split(",") if x.strip().isdigit())
+# === Target setup ===
+TARGET_DATES = {16, 17, 18, 19}
+TARGET_TYPES = {"Public"}
 
-log("Do you want Public, Private, or Both?")
-lot_choice = input("Type choice: ").strip().lower()
-if lot_choice == "public":
-    TARGET_TYPES = {"Public"}
-elif lot_choice == "private":
-    TARGET_TYPES = {"Private"}
-else:
-    TARGET_TYPES = {"Public", "Private"}
+print(f"✅ Watching for {TARGET_TYPES} on dates {TARGET_DATES}")
 
-log(f"✅ Watching for {TARGET_TYPES} dates: {TARGET_DATES}")
+# === Timer ===
+start_time = datetime.now()
+end_time = start_time + timedelta(hours=24)
 
-# === Loop until target found ===
-while True:
+while datetime.now() < end_time:
     results = check_availability()
 
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for ttype in results:
-        # Always print what’s found
-        log(f"🔎 {ttype} October open days: {results[ttype]}")
+        print(f"[{timestamp}] 🔎 {ttype} October open days: {results[ttype]}")
 
-    # Only alert if target lot(s) and date(s) intersect
     for ttype in TARGET_TYPES:
         if ttype in results:
             hit = TARGET_DATES.intersection(results[ttype])
             if hit:
                 msg = f"🚨 Haneda Parking Alert!\n{ttype}: {sorted(hit)} available in October!"
-                log(msg)
+                print(msg)
                 send_telegram(msg)
                 sys.exit(0)
 
-    # Sleep 30s before trying again
     time.sleep(30)
-    
+
+print("⏹️ 24 hours passed, stopping script.")
