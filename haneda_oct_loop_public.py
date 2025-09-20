@@ -1,27 +1,23 @@
-# haneda_oct_oracle.py
+# haneda_oct_loop.py
 from playwright.sync_api import sync_playwright
-import requests
-import time
-import sys
-from datetime import datetime
+import requests, time
 
 # === Telegram Bot Config ===
-BOT_TOKEN = "8402262632:AAHLXhtlueDYepJd8LUEK6J4mSh1UF2MHxg"
-CHAT_ID = "8430243174"
+BOT_TOKEN = "YOUR_BOT_TOKEN"
+CHAT_ID = "YOUR_CHAT_ID"
 TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-def log(msg: str):
-    """Prints message with timestamp prefix"""
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {msg}")
+TARGET_DATES = {16, 17, 18, 19}   # Only care about Public on these days
 
 def send_telegram(msg: str):
     payload = {"chat_id": CHAT_ID, "text": msg}
     r = requests.post(TELEGRAM_URL, data=payload)
     if r.status_code == 200:
-        log("📩 Sent Telegram message")
+        print("📩 Sent Telegram message")
     else:
-        log(f"⚠️ Telegram failed: {r.text}")
+        print(f"⚠️ Telegram error: {r.text}")
+
+LOGIN_URL = "https://pk-reserve.haneda-airport.jp/airport/en/entrance/0000.jsf"
 
 def get_type_name(cal_div):
     img = cal_div.query_selector("table.calendar_btm img")
@@ -36,9 +32,7 @@ def get_type_name(cal_div):
 
 def get_open_days(cal_div):
     days = []
-    cells = cal_div.query_selector_all(
-        "table.calendar_waku td.empty, table.calendar_waku td.congestion"
-    )
+    cells = cal_div.query_selector_all("table.calendar_waku td.empty, table.calendar_waku td.congestion")
     for td in cells:
         a = td.query_selector("a")
         if a:
@@ -47,9 +41,7 @@ def get_open_days(cal_div):
                 days.append(int(txt))
     return sorted(set(days))
 
-def check_availability():
-    LOGIN_URL = "https://pk-reserve.haneda-airport.jp/airport/en/entrance/0000.jsf"
-
+def check_once():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
@@ -78,13 +70,13 @@ def check_availability():
 
         page.wait_for_selector("table.calendar_waku", timeout=20000)
 
-        # --- Go to October ---
+        # --- Switch to October ---
         cal_divs = page.query_selector_all("div#calendar01, div#calendar02")
         results = {}
+
         for idx in range(len(cal_divs)):
             cal_divs = page.query_selector_all("div#calendar01, div#calendar02")
             cal = cal_divs[idx]
-
             next_btn = cal.query_selector("img[src*='arrow_r.gif']")
             if next_btn:
                 with page.expect_navigation():
@@ -100,40 +92,23 @@ def check_availability():
         browser.close()
         return results
 
-# === Prompt user for targets ===
-log("Enter the target dates for October (comma-separated, e.g. 1,2,3):")
-dates_input = input("Target dates: ").strip()
-TARGET_DATES = set(int(x) for x in dates_input.split(",") if x.strip().isdigit())
+# === Loop for 30 minutes (60 × 30s) ===
+for i in range(60):
+    print(f"\n🔄 Run {i+1}/60")
+    results = check_once()
 
-log("Do you want Public, Private, or Both?")
-lot_choice = input("Type choice: ").strip().lower()
-if lot_choice == "public":
-    TARGET_TYPES = {"Public"}
-elif lot_choice == "private":
-    TARGET_TYPES = {"Private"}
-else:
-    TARGET_TYPES = {"Public", "Private"}
+    # Always show current availability
+    for tname, days in results.items():
+        print(f"{tname}: {days}")
 
-log(f"✅ Watching for {TARGET_TYPES} dates: {TARGET_DATES}")
+    # Check for Public target days
+    if "Public" in results:
+        found = TARGET_DATES.intersection(results["Public"])
+        if found:
+            alert_msg = f"🚨 Haneda Parking Alert!\nPublic dates available: {sorted(found)}"
+            print(alert_msg)
+            send_telegram(alert_msg)
+            print("✅ Stopping script (target found)")
+            break
 
-# === Loop until target found ===
-while True:
-    results = check_availability()
-
-    for ttype in results:
-        # Always print what’s found
-        log(f"🔎 {ttype} October open days: {results[ttype]}")
-
-    # Only alert if target lot(s) and date(s) intersect
-    for ttype in TARGET_TYPES:
-        if ttype in results:
-            hit = TARGET_DATES.intersection(results[ttype])
-            if hit:
-                msg = f"🚨 Haneda Parking Alert!\n{ttype}: {sorted(hit)} available in October!"
-                log(msg)
-                send_telegram(msg)
-                sys.exit(0)
-
-    # Sleep 30s before trying again
     time.sleep(30)
-    
