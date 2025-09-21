@@ -1,8 +1,10 @@
-import time
-import sys
-from datetime import datetime, timedelta
+# haneda_oct_oracle.py
 from playwright.sync_api import sync_playwright
 import requests
+import time
+import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo  # Python 3.9+
 
 # === Telegram Bot Config ===
 BOT_TOKEN = "8402262632:AAHLXhtlueDYepJd8LUEK6J4mSh1UF2MHxg"
@@ -11,8 +13,14 @@ TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 def send_telegram(msg: str):
     payload = {"chat_id": CHAT_ID, "text": msg}
-    r = requests.post(TELEGRAM_URL, data=payload)
-    print(f"Telegram status: {r.status_code} {r.text}")
+    try:
+        r = requests.post(TELEGRAM_URL, data=payload, timeout=10)
+        if r.status_code == 200:
+            print("📩 Sent Telegram message")
+        else:
+            print(f"⚠️ Telegram failed: {r.text}")
+    except Exception as e:
+        print(f"⚠️ Telegram error: {e}")
 
 def get_type_name(cal_div):
     img = cal_div.query_selector("table.calendar_btm img")
@@ -40,13 +48,12 @@ def get_open_days(cal_div):
 
 def check_availability():
     LOGIN_URL = "https://pk-reserve.haneda-airport.jp/airport/en/entrance/0000.jsf"
-    results = {}
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.firefox.launch(headless=True)
         page = browser.new_page()
 
-        # Login
+        # --- Login ---
         page.goto(LOGIN_URL)
         page.click("img[alt='login']")
         page.wait_for_selector("form#form1", timeout=20000)
@@ -60,7 +67,7 @@ def check_availability():
         page.click('#form1\\:loginbutton img[alt="ログイン"]')
         page.wait_for_selector("#welcomarea", timeout=20000)
 
-        # Go to reservations
+        # --- Go to reservations ---
         if page.query_selector("#sidebar\\:_idJsp0\\:_idJsp18"):
             with page.expect_navigation():
                 page.click("#sidebar\\:_idJsp0\\:_idJsp18")
@@ -70,8 +77,9 @@ def check_availability():
 
         page.wait_for_selector("table.calendar_waku", timeout=20000)
 
-        # Go to October
+        # --- Check calendars (Oct) ---
         cal_divs = page.query_selector_all("div#calendar01, div#calendar02")
+        results = {}
         for idx in range(len(cal_divs)):
             cal_divs = page.query_selector_all("div#calendar01, div#calendar02")
             cal = cal_divs[idx]
@@ -89,24 +97,32 @@ def check_availability():
             results[tname] = open_days
 
         browser.close()
-    return results
+        return results
 
-# === Target setup ===
-TARGET_DATES = {16, 17, 18, 19}
-TARGET_TYPES = {"Public"}
+# === Interactive prompts ===
+print("Enter the target dates for October (comma-separated, e.g. 1,2,3):")
+dates_input = input("Target dates: ").strip()
+TARGET_DATES = set(int(x) for x in dates_input.split(",") if x.strip().isdigit())
 
-print(f"✅ Watching for {TARGET_TYPES} on dates {TARGET_DATES}")
+print("Do you want Public, Private, or Both?")
+lot_choice = input("Type choice: ").strip().lower()
+if lot_choice == "public":
+    TARGET_TYPES = {"Public"}
+elif lot_choice == "private":
+    TARGET_TYPES = {"Private"}
+else:
+    TARGET_TYPES = {"Public", "Private"}
 
-# === Timer ===
-start_time = datetime.now()
-end_time = start_time + timedelta(hours=24)
+print(f"✅ Watching for {TARGET_TYPES} dates: {TARGET_DATES}")
 
-while datetime.now() < end_time:
+# === Loop until target found OR 24h timeout ===
+start_time = time.time()
+while True:
     results = check_availability()
+    timestamp = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d %H:%M:%S")
 
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for ttype in results:
-        print(f"[{timestamp}] 🔎 {ttype} October open days: {results[ttype]}")
+        print(f"[{timestamp} JST] 🔎 {ttype} October open days: {results[ttype]}")
 
     for ttype in TARGET_TYPES:
         if ttype in results:
@@ -117,6 +133,8 @@ while datetime.now() < end_time:
                 send_telegram(msg)
                 sys.exit(0)
 
-    time.sleep(30)
+    if time.time() - start_time > 24*3600:
+        print("⏹️ Stopping after 24 hours (timeout).")
+        break
 
-print("⏹️ 24 hours passed, stopping script.")
+    time.sleep(30)

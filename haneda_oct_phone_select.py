@@ -4,6 +4,7 @@ import requests
 import time
 import sys
 from datetime import datetime
+from zoneinfo import ZoneInfo  # Python 3.9+
 
 # === Telegram Bot Config ===
 BOT_TOKEN = "YOUR_BOT_TOKEN"
@@ -12,11 +13,14 @@ TELEGRAM_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
 def send_telegram(msg: str):
     payload = {"chat_id": CHAT_ID, "text": msg}
-    r = requests.post(TELEGRAM_URL, data=payload)
-    if r.status_code == 200:
-        print("📩 Sent Telegram message")
-    else:
-        print(f"⚠️ Telegram failed: {r.text}")
+    try:
+        r = requests.post(TELEGRAM_URL, data=payload, timeout=10)
+        if r.status_code == 200:
+            print("📩 Sent Telegram message")
+        else:
+            print(f"⚠️ Telegram failed: {r.text}")
+    except Exception as e:
+        print(f"⚠️ Telegram error: {e}")
 
 def get_type_name(cal_div):
     img = cal_div.query_selector("table.calendar_btm img")
@@ -46,7 +50,6 @@ def check_availability():
     LOGIN_URL = "https://pk-reserve.haneda-airport.jp/airport/en/entrance/0000.jsf"
 
     with sync_playwright() as p:
-        # 🔹 Use Firefox (lighter than Chromium)
         browser = p.firefox.launch(headless=True)
         page = browser.new_page()
 
@@ -74,7 +77,7 @@ def check_availability():
 
         page.wait_for_selector("table.calendar_waku", timeout=20000)
 
-        # --- Go to October ---
+        # --- Check calendars (Oct) ---
         cal_divs = page.query_selector_all("div#calendar01, div#calendar02")
         results = {}
         for idx in range(len(cal_divs)):
@@ -96,7 +99,7 @@ def check_availability():
         browser.close()
         return results
 
-# === Prompt user for targets ===
+# === Interactive prompts ===
 print("Enter the target dates for October (comma-separated, e.g. 1,2,3):")
 dates_input = input("Target dates: ").strip()
 TARGET_DATES = set(int(x) for x in dates_input.split(",") if x.strip().isdigit())
@@ -116,10 +119,10 @@ print(f"✅ Watching for {TARGET_TYPES} dates: {TARGET_DATES}")
 start_time = time.time()
 while True:
     results = check_availability()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d %H:%M:%S")
 
     for ttype in results:
-        print(f"[{timestamp}] 🔎 {ttype} October open days: {results[ttype]}")
+        print(f"[{timestamp} JST] 🔎 {ttype} October open days: {results[ttype]}")
 
     for ttype in TARGET_TYPES:
         if ttype in results:
