@@ -4,7 +4,7 @@ import requests
 import time
 import sys
 from datetime import datetime
-from zoneinfo import ZoneInfo  # Python 3.9+
+import pytz  # works on Python < 3.9
 
 # === Telegram Bot Config ===
 BOT_TOKEN = "YOUR_BOT_TOKEN"
@@ -77,7 +77,7 @@ def check_availability():
 
         page.wait_for_selector("table.calendar_waku", timeout=20000)
 
-        # --- Check calendars (Oct) ---
+        # --- Check calendars (October) ---
         cal_divs = page.query_selector_all("div#calendar01, div#calendar02")
         results = {}
         for idx in range(len(cal_divs)):
@@ -117,9 +117,11 @@ print(f"✅ Watching for {TARGET_TYPES} dates: {TARGET_DATES}")
 
 # === Loop until target found OR 24h timeout ===
 start_time = time.time()
+jst = pytz.timezone("Asia/Tokyo")
+
 while True:
     results = check_availability()
-    timestamp = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
 
     for ttype in results:
         print(f"[{timestamp} JST] 🔎 {ttype} October open days: {results[ttype]}")
